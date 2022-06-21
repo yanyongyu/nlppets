@@ -1,15 +1,14 @@
 [tool.poetry]
-name = "Project Name"
+name = "nlppets"
 version = "0.1.0"
-description = ""
-authors = ["Your Name <you@example.com>"]
+description = "My nlp snippets"
+authors = ["yanyongyu <yanyongyu_1@126.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = ""
-repository = ""
-documentation = ""
-keywords = []
-classifiers = []
+homepage = "https://github.com/yanyongyu/nlppets"
+repository = "https://github.com/yanyongyu/nlppets"
+documentation = "https://github.com/yanyongyu/nlppets"
+keywords = ["nlp"]
 
 [tool.poetry.dependencies]
 python = "^3.8"
