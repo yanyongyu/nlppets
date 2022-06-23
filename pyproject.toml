@@ -14,6 +14,7 @@ keywords = ["nlp"]
 python = "^3.8"
 jieba = "^0.42.1"
 datasets = { version="^2.3.2", optional=true }
+transformers = { version="^4.20.1", optional=true }
 
 [tool.poetry.dev-dependencies]
 isort = "^5.10.1"
@@ -22,6 +23,8 @@ pre-commit = "^2.16.0"
 
 [tool.poetry.extras]
 datasets = ["datasets"]
+transformers = ["transformers"]
+
 
 [tool.pyright]
 reportPrivateImportUsage = false
