@@ -5,16 +5,15 @@ from datasets import (
     Split,
     Value,
     Features,
-    Sequence,
     DatasetInfo,
     SplitGenerator,
     DownloadManager,
 )
 
-from nlppets.general import dir_to_sentence, extract_chinese_token
+from nlppets.general import dir_to_sentence
 
 
-class ChineseRawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
+class RawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
     """Simple load sentences from raw text dir."""
 
     def _info(self) -> DatasetInfo:
@@ -22,7 +21,6 @@ class ChineseRawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
             {
                 "id": Value("uint32"),
                 "text": Value("string"),
-                "chinese_token": Sequence(Value("string")),
             }
         )
         return DatasetInfo(
@@ -44,8 +42,4 @@ class ChineseRawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
 
     def _generate_examples(self, *, data_dir: Path):
         for index, sentence in enumerate(dir_to_sentence(data_dir)):
-            yield index, {
-                "id": index,
-                "text": sentence,
-                "chinese_token": extract_chinese_token(sentence, min_length=1),
-            }
+            yield index, {"id": index, "text": sentence}

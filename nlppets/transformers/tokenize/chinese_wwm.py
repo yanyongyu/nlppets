@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Union, Optional
 
 from transformers import PreTrainedTokenizer
 
-from nlppets.general import is_chinese_token
+from nlppets.general import is_chinese_token, extract_chinese_token
 
 
 def _add_sub_symbol(input_tokens: List[str], chinese_tokens: List[str]) -> List[str]:
@@ -33,16 +33,26 @@ def _add_sub_symbol(input_tokens: List[str], chinese_tokens: List[str]) -> List[
 
 
 class ChineseWWMTokenizer:
+    """Chinese WWM tokenizer."""
+
     def __init__(
         self,
         tokenizer: PreTrainedTokenizer,
         max_seq_length: int,
         *,
         text_column_name: Optional[str] = None,
-        chinese_token_column_name: Optional[str] = None,
         padding: Union[str, bool] = False,
         truncation: Union[str, bool] = True,
     ):
+        """Tokenizer from transformers should be provided.
+
+        Args:
+            tokenizer (PreTrainedTokenizer): transformers pretrained tokenizer.
+            max_seq_length (int): max sequence length accepted by model.
+            text_column_name (Optional[str], optional): dataset text column name. Defaults to `text`.
+            padding (Union[str, bool], optional): whether to add padding or not. Defaults to False.
+            truncation (Union[str, bool], optional): whether to truncate the input or not. Defaults to True.
+        """
         self.tokenizer = tokenizer
 
         self.padding = padding
@@ -50,7 +60,6 @@ class ChineseWWMTokenizer:
         self.max_seq_length = max_seq_length
 
         self.text_column_name = text_column_name or "text"
-        self.chinese_token_column_name = chinese_token_column_name or "chinese_token"
 
     def batched_tokenize_line_by_line(self, examples: Dict[str, List[Any]]):
         encoded_input = self.tokenizer(
@@ -61,17 +70,14 @@ class ChineseWWMTokenizer:
             return_special_tokens_mask=True,
         )
 
-        # chinese token not provided
-        if self.chinese_token_column_name not in examples:
-            return encoded_input
-
         # chinese wwm
+        input_ids: List[int]
         chinese_ref: List[List[int]] = []
-        for input_ids, chinese_token in zip(
-            encoded_input["input_ids"], examples[self.chinese_token_column_name]  # type: ignore
-        ):
+        for input_ids, text in zip(encoded_input["input_ids"], examples[self.text_column_name]):  # type: ignore
             input_tokens = [self.tokenizer._convert_id_to_token(i) for i in input_ids]
-            input_tokens = _add_sub_symbol(input_tokens, chinese_token)
+            input_tokens = _add_sub_symbol(
+                input_tokens, list(extract_chinese_token(text, min_length=2))
+            )
             refs = [
                 index
                 for index, input_token in enumerate(input_tokens)
@@ -81,20 +87,18 @@ class ChineseWWMTokenizer:
         return {**encoded_input, "chinese_ref": chinese_ref}
 
     def batched_tokenize_group_texts(self, examples: Dict[str, List[Any]]):
-        has_chinese_ref = self.chinese_token_column_name in examples
         # Concatenate all texts.
         result = {
             "input_ids": [],
             "token_type_ids": [],
             "attention_mask": [],
             "special_tokens_mask": [],
+            "chinese_ref": [],
         }
-        if has_chinese_ref:
-            result["chinese_ref"] = []
 
         tmp_input_ids = []
         tmp_chinese_ref = []
-        for index, text in enumerate(examples[self.text_column_name]):
+        for text in examples[self.text_column_name]:
             input_ids = self.tokenizer.encode(text)
 
             # overflow, commit first
@@ -118,8 +122,7 @@ class ChineseWWMTokenizer:
                 result["special_tokens_mask"].append(
                     encoded_inputs["special_tokens_mask"]
                 )
-                if has_chinese_ref:
-                    result["chinese_ref"].append(tmp_chinese_ref)
+                result["chinese_ref"].append(tmp_chinese_ref)
 
                 # reset
                 tmp_input_ids = []
@@ -127,7 +130,7 @@ class ChineseWWMTokenizer:
 
             input_tokens = [self.tokenizer._convert_id_to_token(i) for i in input_ids]
             input_tokens = _add_sub_symbol(
-                input_tokens, examples[self.chinese_token_column_name][index]
+                input_tokens, list(extract_chinese_token(text, min_length=2))
             )
             refs = [
                 len(tmp_input_ids) + index
@@ -156,6 +159,5 @@ class ChineseWWMTokenizer:
             result["token_type_ids"].append(encoded_inputs["token_type_ids"])
             result["attention_mask"].append(encoded_inputs["attention_mask"])
             result["special_tokens_mask"].append(encoded_inputs["special_tokens_mask"])
-            if has_chinese_ref:
-                result["chinese_ref"].append(tmp_chinese_ref)
+            result["chinese_ref"].append(tmp_chinese_ref)
         return result

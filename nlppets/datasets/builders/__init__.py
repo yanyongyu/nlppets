@@ -1,3 +1,1 @@
-from .chinese_raw_text import (
-    ChineseRawTextDatasetBuilder as ChineseRawTextDatasetBuilder,
-)
+from .raw_text import RawTextDatasetBuilder as RawTextDatasetBuilder
