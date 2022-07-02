@@ -1,2 +1,2 @@
-from .chinese_wwm import ChineseWWMTokenizer
+from .chinese_wwm import ChineseWWMTokenizer as ChineseWWMTokenizer
 from .extract_subtoken_indexs import extract_subtoken_indexs as extract_subtoken_indexs
