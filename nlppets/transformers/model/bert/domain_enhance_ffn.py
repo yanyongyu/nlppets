@@ -72,7 +72,7 @@ class BertOutput(BaseOutput):
         for name, states in zip(self.enhancements, enhancements):
             # [B, L, E] -> [B, L, H]
             # add together
-            hidden_states = torch.add(hidden_states, getattr(self, name)(states))
+            hidden_states += getattr(self, name)(states)
 
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -82,7 +82,7 @@ class BertOutput(BaseOutput):
 def domain_enhance_ffn(
     model: MT, domain_ffn_enhance: Optional[Dict[str, int]] = None
 ) -> MT:
-    """Modify BERT model to apply domain enhancement.
+    """Modify BERT model to apply feed-forward network domain enhancement.
 
     Args:
         model (Type[BertPreTrainedModel]): Original BERT model class.
@@ -117,13 +117,14 @@ def domain_enhance_ffn(
 
         config_with_enhance = cast(Config, config)
         # if domain enhance, replace modules
-        if config.domain_ffn_enhance:
+        if config_with_enhance.domain_ffn_enhance:
             nested_replace_module(
                 self, intermediate_module, BertIntermediate(config_with_enhance)
             )
             nested_replace_module(
                 self, intermediate_output_module, BertOutput(config_with_enhance)
             )
+
         self.post_init()
 
     model.__init__ = patched_init
