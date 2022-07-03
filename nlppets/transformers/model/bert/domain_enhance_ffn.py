@@ -1,3 +1,4 @@
+from functools import partial
 from typing import Dict, Type, TypeVar, Optional, Protocol, cast
 
 import torch
@@ -119,10 +120,14 @@ def domain_enhance_ffn(
         # if domain enhance, replace modules
         if config_with_enhance.domain_ffn_enhance:
             nested_replace_module(
-                self, intermediate_module, BertIntermediate(config_with_enhance)
+                self,
+                intermediate_module,
+                partial(BertIntermediate, config_with_enhance),
             )
             nested_replace_module(
-                self, intermediate_output_module, BertOutput(config_with_enhance)
+                self,
+                intermediate_output_module,
+                partial(BertOutput, config_with_enhance),
             )
 
         self.post_init()

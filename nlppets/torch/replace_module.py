@@ -1,4 +1,4 @@
-from typing import TypeVar
+from typing import Union, TypeVar, Callable
 
 import torch.nn as nn
 
@@ -30,7 +30,9 @@ def replace_module(module: M, child_name: str, new_child: nn.Module) -> M:
     return module
 
 
-def nested_replace_module(module: M, child_name: str, new_child: nn.Module) -> M:
+def nested_replace_module(
+    module: M, child_name: str, new_child: Union[nn.Module, Callable[[], nn.Module]]
+) -> M:
     """Replace a nested child module in a module.
 
     Child module name is a dot-separated string of module names.
@@ -39,13 +41,16 @@ def nested_replace_module(module: M, child_name: str, new_child: nn.Module) -> M
     Args:
         module (nn.Module): The module to replace the child in.
         child_name (str): The name of the child module to replace.
-        new_child (nn.Module): The new child module.
+        new_child (Union[nn.Module, Callable[[], nn.Module]]):
+            The new child module or a new module factory.
 
     Returns:
         nn.Module: The module with the child replaced.
     """
     nested_names = child_name.split(".")
     if len(nested_names) == 1:
+        if not isinstance(new_child, nn.Module):
+            new_child = new_child()
         replace_module(module, nested_names[0], new_child)
     elif nested_names[0] == "*":
         for _, child in module.named_children():

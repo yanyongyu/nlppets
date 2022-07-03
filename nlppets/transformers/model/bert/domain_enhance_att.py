@@ -1,16 +1,6 @@
 import math
-from typing import (
-    Any,
-    Dict,
-    List,
-    Type,
-    Tuple,
-    Literal,
-    TypeVar,
-    Optional,
-    Protocol,
-    cast,
-)
+from functools import partial
+from typing import Any, List, Type, Tuple, Literal, TypeVar, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
@@ -288,10 +278,12 @@ def domain_enhance_att(model: MT, domain_att_enhance: Optional[List[str]] = None
         # if domain enhance, replace modules
         if config_with_enhance.domain_att_enhance:
             nested_replace_module(
-                self, attention_module, BertSelfAttention(config_with_enhance)
+                self, attention_module, partial(BertSelfAttention, config_with_enhance)
             )
             nested_replace_module(
-                self, attention_output_module, BertSelfOutput(config_with_enhance)
+                self,
+                attention_output_module,
+                partial(BertSelfOutput, config_with_enhance),
             )
 
         self.post_init()
