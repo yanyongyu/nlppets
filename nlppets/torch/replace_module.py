@@ -36,7 +36,7 @@ def nested_replace_module(
     """Replace a nested child module in a module.
 
     Child module name is a dot-separated string of module names.
-    Use `*` to replace all child module (like items of `nn.ModuleList`).
+    Use `*` to replace all child modules (like items of `nn.ModuleList`).
 
     Args:
         module (nn.Module): The module to replace the child in.
