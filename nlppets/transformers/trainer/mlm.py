@@ -17,7 +17,7 @@ from transformers import (
 def train_mlm(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
-    train_args: TrainingArguments,
+    training_args: TrainingArguments,
     train_dataset: Optional[Dataset] = None,
     eval_dataset: Optional[Dataset] = None,
     *,
@@ -29,6 +29,20 @@ def train_mlm(
         ]
     ] = None,
 ):
+    """Masked Language Model training function.
+
+    Args:
+        model (PreTrainedModel): The model to train.
+        tokenizer (PreTrainedTokenizerBase): The tokenizer to use.
+        training_args (TrainingArguments): The training arguments.
+        train_dataset (Optional[Dataset], optional): Training dataset to use.
+        eval_dataset (Optional[Dataset], optional): Evaluation dataset to use.
+        wwm (bool, optional): Whether to use whole word mask. Defaults to True.
+        compute_metrics (Optional[Callable[[EvalPrediction], dict]], optional):
+            Metrics function. Defaults to None.
+        preprocess_logits (Optional[Callable[[Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor], torch.Tensor]], optional):
+            Logits preprocess function. Defaults to None.
+    """
     if wwm:
         collator = DataCollatorForWholeWordMask(tokenizer=tokenizer)
     else:
@@ -36,7 +50,7 @@ def train_mlm(
 
     trainer = Trainer(
         model=model,
-        args=train_args,
+        args=training_args,
         data_collator=collator,
         train_dataset=train_dataset,  # type: ignore
         eval_dataset=eval_dataset,  # type: ignore
@@ -46,7 +60,7 @@ def train_mlm(
     )
 
     if train_dataset:
-        last_checkpoint = get_last_checkpoint(train_args.output_dir)
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
 
         result: TrainOutput = trainer.train(resume_from_checkpoint=last_checkpoint)
 
