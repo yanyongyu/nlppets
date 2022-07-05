@@ -1,4 +1,3 @@
-from functools import partial
 from typing import Dict, Type, TypeVar, Optional, Protocol, cast
 
 import torch
@@ -122,12 +121,12 @@ def domain_enhance_ffn(
             nested_replace_module(
                 self,
                 intermediate_module,
-                partial(BertIntermediate, config_with_enhance),
+                lambda: BertIntermediate(config_with_enhance),
             )
             nested_replace_module(
                 self,
                 intermediate_output_module,
-                partial(BertOutput, config_with_enhance),
+                lambda: BertOutput(config_with_enhance),
             )
 
         self.post_init()
