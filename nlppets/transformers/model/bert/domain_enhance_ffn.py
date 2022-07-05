@@ -121,12 +121,12 @@ def domain_enhance_ffn(
             nested_replace_module(
                 self,
                 intermediate_module,
-                lambda: BertIntermediate(config_with_enhance),
+                lambda _: BertIntermediate(config_with_enhance),
             )
             nested_replace_module(
                 self,
                 intermediate_output_module,
-                lambda: BertOutput(config_with_enhance),
+                lambda _: BertOutput(config_with_enhance),
             )
 
         self.post_init()

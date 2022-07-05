@@ -277,12 +277,12 @@ def domain_enhance_att(model: MT, domain_att_enhance: Optional[List[str]] = None
         # if domain enhance, replace modules
         if config_with_enhance.domain_att_enhance:
             nested_replace_module(
-                self, attention_module, lambda: BertSelfAttention(config_with_enhance)
+                self, attention_module, lambda _: BertSelfAttention(config_with_enhance)
             )
             nested_replace_module(
                 self,
                 attention_output_module,
-                lambda: BertSelfOutput(config_with_enhance),
+                lambda _: BertSelfOutput(config_with_enhance),
             )
 
         self.post_init()
