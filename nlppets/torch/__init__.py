@@ -7,6 +7,7 @@ except ImportError:
 
 
 from .combine_model import combine_model as combine_model
+from .concat_linear import concat_linear as concat_linear
 from .freeze_tensor import freeze_tensor as freeze_tensor
 from .replace_module import replace_module as replace_module
 from .freeze_tensor import unfreeze_tensor as unfreeze_tensor

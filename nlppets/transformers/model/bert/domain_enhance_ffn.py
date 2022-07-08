@@ -7,7 +7,7 @@ from transformers.models.bert import BertModel, BertPreTrainedModel
 from transformers.models.bert.modeling_bert import BertOutput as BaseOutput
 from transformers.models.bert.modeling_bert import BertIntermediate as BaseIntermediate
 
-from nlppets.torch import nested_replace_module
+from nlppets.torch import concat_linear, nested_replace_module
 
 MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
 
@@ -29,20 +29,14 @@ class BertIntermediate(BaseIntermediate):
             setattr(self, name, nn.Linear(config.hidden_size, size))
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # [B, L, H] -> [B, L, I]
-        tmp_hidden_states: torch.Tensor = self.dense(hidden_states)
-
         # patched for domain enhancements
-        for name in self.enhancements:
-            # [B, L, H] -> [B, L, E]
-            # [B, L, I], [B, L, E] -> [B, L, I + E]
-            tmp_hidden_states = torch.concat(
-                (tmp_hidden_states, getattr(self, name)(hidden_states)), dim=-1
-            )
+        # [B, L, H] -> [B, L, I + E]
+        hidden_states = concat_linear(
+            self.dense, *(getattr(self, name) for name in self.enhancements)
+        )(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
 
-        tmp_hidden_states = self.intermediate_act_fn(tmp_hidden_states)
-
-        return tmp_hidden_states
+        return hidden_states
 
 
 class BertOutput(BaseOutput):
@@ -60,20 +54,10 @@ class BertOutput(BaseOutput):
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
     ) -> torch.Tensor:
         # patched for domain enhancements
-        # [B, L, I + E] -> [B, L, I], [B, L, E]
-        hidden_states, *enhancements = torch.split(
-            hidden_states, [self.intermediate_size, *self.enhancements.values()], dim=-1
-        )
-
-        # [B, L, I] -> [B, L, H]
-        hidden_states = self.dense(hidden_states)
-
-        # patched for domain enhancements
-        for name, states in zip(self.enhancements, enhancements):
-            # [B, L, E] -> [B, L, H]
-            # add together
-            hidden_states += getattr(self, name)(states)
-
+        # [B, L, I + E] -> [B, L, H]
+        hidden_states = concat_linear(
+            self.dense, *(getattr(self, name) for name in self.enhancements)
+        )(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states

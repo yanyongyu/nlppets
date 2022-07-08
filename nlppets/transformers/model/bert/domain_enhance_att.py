@@ -11,7 +11,7 @@ from transformers.models.bert.modeling_bert import (
     BertSelfAttention as BaseSelfAttention,
 )
 
-from nlppets.torch import nested_replace_module
+from nlppets.torch import concat_linear, nested_replace_module
 
 MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
 
@@ -60,15 +60,10 @@ class BertSelfAttention(BaseSelfAttention):
     def _patch_for_domain_enhance(
         self, hidden_states: torch.Tensor, type: Literal["query", "key", "value"]
     ) -> torch.Tensor:
-        # [B, L, H] -> [B, L, H]
-        tmp_tensor = getattr(self, type)(hidden_states)
-        for name in self.enhancements:
-            # [B, L, H] -> [B, L, H + E]
-            tmp_tensor = torch.concat(
-                (tmp_tensor, getattr(self, f"{name}_{type}")(hidden_states)),
-                dim=-1,
-            )
-        return tmp_tensor
+        return concat_linear(
+            getattr(self, type),
+            *(getattr(self, f"{name}_{type}") for name in self.enhancements),
+        )(hidden_states)
 
     def forward(
         self,
@@ -219,22 +214,10 @@ class BertSelfOutput(BaseSelfOutput):
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
     ) -> torch.Tensor:
         # patched for domain enhancement
-        # [B, L, H + E * HS] -> [B, L, H], E * [B, L, HS]
-        hidden_states, *enhancements = torch.split(
-            hidden_states,
-            [self.hidden_size] + len(self.enhancements) * [self.attention_head_size],
-            dim=-1,
-        )
-
-        # [B, L, H] -> [B, L, H]
-        hidden_states = self.dense(hidden_states)
-
-        # patched for domain enhancements
-        for name, states in zip(self.enhancements, enhancements):
-            # [B, L, HS] -> [B, L, H]
-            # add together
-            hidden_states += getattr(self, name)(states)
-
+        # [B, L, H + E * HS] -> [B, L, H]
+        hidden_states = concat_linear(
+            self.dense, *(getattr(self, name) for name in self.enhancements)
+        )(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
