@@ -79,19 +79,21 @@ def domain_enhance_ffn(
     """
     intermediate_module: str = (
         "encoder.layer.*.intermediate"
-        if model is BertModel
+        if issubclass(model, BertModel)
         else "bert.encoder.layer.*.intermediate"
     )
     intermediate_output_module: str = (
         "encoder.layer.*.output"
-        if model is BertModel
+        if issubclass(model, BertModel)
         else "bert.encoder.layer.*.output"
     )
+
+    model = cast(MT, model)
 
     origin_init = model.__init__
 
     def patched_init(
-        self: PreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
+        self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
     ):
         origin_init(self, config, *inputs, **kwargs)
 

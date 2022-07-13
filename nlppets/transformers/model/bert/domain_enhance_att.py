@@ -236,19 +236,21 @@ def domain_enhance_att(model: MT, domain_att_enhance: Optional[List[str]] = None
     """
     attention_module: str = (
         "encoder.layer.*.attention.self"
-        if model is BertModel
+        if issubclass(model, BertModel)
         else "bert.encoder.layer.*.attention.self"
     )
     attention_output_module: str = (
         "encoder.layer.*.attention.output"
-        if model is BertModel
+        if issubclass(model, BertModel)
         else "bert.encoder.layer.*.attention.output"
     )
+
+    model = cast(MT, model)
 
     origin_init = model.__init__
 
     def patched_init(
-        self: PreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
+        self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
     ):
         origin_init(self, config, *inputs, **kwargs)
 
