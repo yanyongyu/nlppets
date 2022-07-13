@@ -115,6 +115,8 @@ def domain_enhance_ffn(
 
         self.post_init()
 
-    model.__init__ = patched_init
+    model = type(
+        f"{model.__name__}_EnhanceFFN", (model,), {"__init__": patched_init}
+    )  # type: ignore
 
     return model

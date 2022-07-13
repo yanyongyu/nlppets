@@ -270,6 +270,8 @@ def domain_enhance_att(model: MT, domain_att_enhance: Optional[List[str]] = None
 
         self.post_init()
 
-    model.__init__ = patched_init
+    model = type(
+        f"{model.__name__}_EnhanceAtt", (model,), {"__init__": patched_init}
+    )  # type: ignore
 
     return model
