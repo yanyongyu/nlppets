@@ -14,3 +14,6 @@ from .freeze_tensor import nested_freeze_tensor as nested_freeze_tensor
 from .count_cuda_devices import count_cuda_devices as count_cuda_devices
 from .replace_module import nested_replace_module as nested_replace_module
 from .freeze_tensor import nested_unfreeze_tensor as nested_unfreeze_tensor
+from .calculate_gradient_accumulation import (
+    calculate_gradient_accumulation as calculate_gradient_accumulation,
+)
