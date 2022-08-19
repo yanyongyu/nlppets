@@ -1,5 +1,16 @@
 import math
-from typing import Any, List, Type, Tuple, Literal, TypeVar, Optional, Protocol, cast
+from typing import (
+    Any,
+    Dict,
+    List,
+    Type,
+    Tuple,
+    Literal,
+    TypeVar,
+    Optional,
+    Protocol,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -19,7 +30,7 @@ MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
 class Config(Protocol):
     hidden_size: int
     num_attention_heads: int
-    domain_att_enhance: List[str]
+    domain_att_enhance: Dict[str, int]
     """domain pre-training enhancements."""
 
 
@@ -28,22 +39,23 @@ class BertSelfAttention(BaseSelfAttention):
         super(BertSelfAttention, self).__init__(config)
 
         # added
-        self.enhancements = config.domain_att_enhance
-        for name in config.domain_att_enhance:
+        self.enhancements = list(config.domain_att_enhance.keys())
+        self.additional_heads = sum(config.domain_att_enhance.values())
+        for name, size in config.domain_att_enhance.items():
             setattr(
                 self,
                 f"{name}_query",
-                nn.Linear(config.hidden_size, self.attention_head_size),
+                nn.Linear(config.hidden_size, self.attention_head_size * size),
             )
             setattr(
                 self,
                 f"{name}_key",
-                nn.Linear(config.hidden_size, self.attention_head_size),
+                nn.Linear(config.hidden_size, self.attention_head_size * size),
             )
             setattr(
                 self,
                 f"{name}_value",
-                nn.Linear(config.hidden_size, self.attention_head_size),
+                nn.Linear(config.hidden_size, self.attention_head_size * size),
             )
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
@@ -186,7 +198,7 @@ class BertSelfAttention(BaseSelfAttention):
         # [B, HN + E, L, HS] -> [B, L, H + E * HS]
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (
-            self.all_head_size + len(self.enhancements) * self.attention_head_size,
+            self.all_head_size + self.additional_heads * self.attention_head_size,
         )
         context_layer = context_layer.view(new_context_layer_shape)
 
@@ -204,11 +216,15 @@ class BertSelfOutput(BaseSelfOutput):
         super(BertSelfOutput, self).__init__(config)
 
         # added
-        self.enhancements = config.domain_att_enhance
+        self.enhancements = list(config.domain_att_enhance.keys())
         self.hidden_size = config.hidden_size
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        for name in config.domain_att_enhance:
-            setattr(self, name, nn.Linear(self.attention_head_size, config.hidden_size))
+        for name, size in config.domain_att_enhance.items():
+            setattr(
+                self,
+                name,
+                nn.Linear(self.attention_head_size * size, config.hidden_size),
+            )
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
@@ -223,12 +239,14 @@ class BertSelfOutput(BaseSelfOutput):
         return hidden_states
 
 
-def domain_enhance_att(model: MT, domain_att_enhance: Optional[List[str]] = None) -> MT:
+def domain_enhance_att(
+    model: MT, domain_att_enhance: Optional[Dict[str, int]] = None
+) -> MT:
     """Modify BERT model to apply self attention domain enhancement.
 
     Args:
         model (Type[BertPreTrainedModel]): Original BERT model class.
-        domain_att_enhance (Optional[List[str]]): Domain enhancements.
+        domain_att_enhance (Optional[Dict[str, int]]): Domain enhancements.
             If None is provided, will read from existing configs.
 
     Returns:
