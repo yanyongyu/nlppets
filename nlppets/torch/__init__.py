@@ -5,6 +5,7 @@ except ImportError:
         "PyTorch module not installed. Please install it first."
     ) from None
 
+from .to_device import to_device as to_device
 from .combine_model import combine_model as combine_model
 from .concat_linear import concat_linear as concat_linear
 from .freeze_tensor import freeze_tensor as freeze_tensor
