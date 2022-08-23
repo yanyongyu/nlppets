@@ -1,4 +1,6 @@
+from typing import List
 from pathlib import Path
+from dataclasses import field, dataclass
 
 import datasets
 from datasets import (
@@ -10,11 +12,26 @@ from datasets import (
     DownloadManager,
 )
 
-from nlppets.general import dir_to_sentence
+from nlppets.general import dir_to_sentence, file_to_sentence
+
+
+@dataclass
+class RawTextDatasetConfig(datasets.BuilderConfig):
+    dirs: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
 
 
 class RawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
-    """Simple load sentences from raw text dir."""
+    """Simple loading sentences from raw text dirs/files.
+
+    Examples:
+        >>> builder = RawTextDatasetBuilder(dirs=["./data/raw_text/"], files=["./data/text.txt"])
+        >>> builder.download_and_prepare()
+        >>> dataset = builder.as_dataset()
+    """
+
+    config: RawTextDatasetConfig
+    BUILDER_CONFIG_CLASS = RawTextDatasetConfig
 
     def _info(self) -> DatasetInfo:
         features = Features(
@@ -28,18 +45,23 @@ class RawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager: DownloadManager) -> list[SplitGenerator]:
-        if not self.config.data_dir:
-            raise ValueError("data_dir is not set")
-
-        data_dir = Path(self.config.data_dir)
+        dirs = [Path(d) for d in self.config.dirs]
+        files = [Path(f) for f in self.config.files]
 
         return [
             SplitGenerator(
                 name=str(Split.TRAIN),
-                gen_kwargs={"data_dir": data_dir},
+                gen_kwargs={"dirs": dirs, "files": files},
             )
         ]
 
-    def _generate_examples(self, *, data_dir: Path):
-        for index, sentence in enumerate(dir_to_sentence(data_dir)):
-            yield index, {"id": index, "text": sentence}
+    def _generate_examples(self, *, dirs: List[Path], files: List[Path]):
+        index = -1
+        for dir in dirs:
+            for sentence in dir_to_sentence(dir):
+                index += 1
+                yield index, {"id": index, "text": sentence}
+        for file in files:
+            for sentence in file_to_sentence(file):
+                index += 1
+                yield index, {"id": index, "text": sentence}
