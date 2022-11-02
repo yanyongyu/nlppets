@@ -19,7 +19,7 @@ def calculate_gradient_accumulation(
     """
     if torch.distributed.is_initialized():
         gpu_cpu_count = torch.distributed.get_world_size()
-        if not gpu_cpu_count <= 0:
+        if gpu_cpu_count <= 0:
             raise ValueError(
                 f"Torch is running in distributed mode, but the world size is {gpu_cpu_count}."
             )
