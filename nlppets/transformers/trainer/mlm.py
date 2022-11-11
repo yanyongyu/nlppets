@@ -22,6 +22,7 @@ def train_mlm(
     eval_dataset: Optional[Dataset] = None,
     *,
     wwm: bool = True,
+    collator: Callable | None = None,
     compute_metrics: Optional[Callable[[EvalPrediction], dict]] = None,
     preprocess_logits: Optional[
         Callable[
@@ -43,7 +44,9 @@ def train_mlm(
         preprocess_logits (Optional[Callable[[Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor], torch.Tensor]], optional):
             Logits preprocess function. Defaults to None.
     """
-    if wwm:
+    if collator is not None:
+        pass
+    elif wwm:
         collator = DataCollatorForWholeWordMask(tokenizer=tokenizer)
     else:
         collator = DataCollatorForLanguageModeling(tokenizer=tokenizer)
