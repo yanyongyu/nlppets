@@ -45,8 +45,8 @@ class RawTextDatasetBuilder(datasets.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager: DownloadManager) -> list[SplitGenerator]:
-        dirs = [Path(d) for d in self.config.dirs]
-        files = [Path(f) for f in self.config.files]
+        dirs = tuple(Path(d) for d in self.config.dirs)
+        files = tuple(Path(f) for f in self.config.files)
 
         return [
             SplitGenerator(
