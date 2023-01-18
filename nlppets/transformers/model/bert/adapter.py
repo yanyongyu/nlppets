@@ -34,17 +34,17 @@ class Adapter(nn.Module):
             setattr(self, f"{name}_down", nn.Linear(config.hidden_size, size))
             setattr(self, f"{name}_up", nn.Linear(size, config.hidden_size))
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_states: torch.Tensor) -> torch.Tensor:
         # [B, L, H] -> [B, L, A]
         hidden_states = concat_linear(
             *(getattr(self, f"{name}_down") for name in self.adapters)
-        )(hidden_states)
+        )(input_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
         # [B, L, A] -> [B, L, H]
         hidden_states = concat_linear(
             *(getattr(self, f"{name}_up") for name in self.adapters)
         )(hidden_states)
-        return hidden_states
+        return hidden_states + input_states
 
 
 class BertSelfOutput(BaseSelfOutput):
