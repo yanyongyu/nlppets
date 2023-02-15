@@ -1,4 +1,4 @@
-from typing import Tuple, Union, Callable, Optional
+from typing import List, Tuple, Union, Callable, Optional
 
 import torch
 from datasets import Dataset
@@ -8,6 +8,7 @@ from transformers import (
     Trainer,
     EvalPrediction,
     PreTrainedModel,
+    TrainerCallback,
     PreTrainedTokenizerBase,
     DataCollatorForWholeWordMask,
     DataCollatorForLanguageModeling,
@@ -24,6 +25,7 @@ def train_mlm(
     wwm: bool = True,
     collator: Callable | None = None,
     compute_metrics: Optional[Callable[[EvalPrediction], dict]] = None,
+    callbacks: Optional[List[TrainerCallback]] = None,
     preprocess_logits: Optional[
         Callable[
             [Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor], torch.Tensor
@@ -59,6 +61,7 @@ def train_mlm(
         eval_dataset=eval_dataset,  # type: ignore
         tokenizer=tokenizer,
         compute_metrics=compute_metrics,
+        callbacks=callbacks,
         preprocess_logits_for_metrics=preprocess_logits,  # type: ignore
     )
 
