@@ -1,21 +1,10 @@
 import math
-from typing import (
-    Any,
-    Dict,
-    List,
-    Type,
-    Tuple,
-    Literal,
-    TypeVar,
-    Optional,
-    Protocol,
-    cast,
-)
+from typing import Any, Dict, Type, Tuple, Literal, TypeVar, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PretrainedConfig
 from transformers.models.bert import BertModel, BertPreTrainedModel
 from transformers.models.bert.modeling_bert import BertSelfOutput as BaseSelfOutput
 from transformers.models.bert.modeling_bert import (

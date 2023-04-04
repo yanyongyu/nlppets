@@ -2,7 +2,7 @@ from typing import Dict, Type, TypeVar, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
-from transformers import PreTrainedModel, PretrainedConfig
+from transformers import PretrainedConfig
 from transformers.models.bert import BertModel, BertPreTrainedModel
 from transformers.models.bert.modeling_bert import BertOutput as BaseOutput
 from transformers.models.bert.modeling_bert import BertIntermediate as BaseIntermediate
