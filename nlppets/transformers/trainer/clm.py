@@ -9,20 +9,18 @@ from transformers import (
     EvalPrediction,
     PreTrainedModel,
     TrainerCallback,
+    DefaultDataCollator,
     PreTrainedTokenizerBase,
-    DataCollatorForWholeWordMask,
-    DataCollatorForLanguageModeling,
 )
 
 
-def train_mlm(
+def train_clm(
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizerBase,
     training_args: TrainingArguments,
     train_dataset: Optional[Dataset] = None,
     eval_dataset: Optional[Dataset] = None,
     *,
-    wwm: bool = True,
     collator: Optional[Callable] = None,
     compute_metrics: Optional[Callable[[EvalPrediction], dict]] = None,
     callbacks: Optional[List[TrainerCallback]] = None,
@@ -32,7 +30,7 @@ def train_mlm(
         ]
     ] = None,
 ):
-    """Masked Language Model training function.
+    """Causal Language Model training function.
 
     Args:
         model (PreTrainedModel): The model to train.
@@ -40,7 +38,6 @@ def train_mlm(
         training_args (TrainingArguments): The training arguments.
         train_dataset (Optional[Dataset], optional): Training dataset to use.
         eval_dataset (Optional[Dataset], optional): Evaluation dataset to use.
-        wwm (bool, optional): Whether to use whole word mask. Defaults to True.
         collator (Optional[Callable], optional): Data collator to use. Defaults to None.
         compute_metrics (Optional[Callable[[EvalPrediction], dict]], optional):
             Metrics function. Defaults to None.
@@ -48,12 +45,7 @@ def train_mlm(
         preprocess_logits (Optional[Callable[[Union[torch.Tensor, Tuple[torch.Tensor, ...]], torch.Tensor], torch.Tensor]], optional):
             Logits preprocess function. Defaults to None.
     """
-    if collator is not None:
-        pass
-    elif wwm:
-        collator = DataCollatorForWholeWordMask(tokenizer=tokenizer)
-    else:
-        collator = DataCollatorForLanguageModeling(tokenizer=tokenizer)
+    collator = collator or DefaultDataCollator()
 
     trainer = Trainer(
         model=model,
