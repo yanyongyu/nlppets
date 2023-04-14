@@ -22,18 +22,8 @@ class Config(Protocol):
 
 
 class BloomAttention(BaseAttention):
-    def __init__(self, config: Config):
-        super(BloomAttention, self).__init__(cast(BloomConfig, config))
-
-        # added
-        self.enhancements = config.domain_att_enhance
-        self.additional_heads = sum(config.domain_att_enhance.values())
-        for name, size in config.domain_att_enhance.items():
-            setattr(
-                self,
-                f"{name}",
-                nn.Linear(config.hidden_size, self.head_dim * size * 3),
-            )
+    enhancements: Dict[str, int]
+    additional_heads: int
 
     def _split_heads(
         self, fused_qkv: torch.Tensor
@@ -107,10 +97,7 @@ class BloomAttention(BaseAttention):
 
         _, _, kv_length = key_layer.shape
 
-        if use_cache is True:
-            present = (key_layer, value_layer)
-        else:
-            present = None
+        present = (key_layer, value_layer) if use_cache else None
 
         # [B * (HN + EN), L, HS] * [B * (HN + EN), HS, kv_length] -> [B * (HN + EN), L, kv_length]
         # we use `torch.Tensor.baddbmm` instead of `torch.baddbmm` as the latter isn't supported by TorchScript v1.11
@@ -168,6 +155,20 @@ class BloomAttention(BaseAttention):
         return outputs
 
 
+def _patch_module(module: BloomAttention, config: Config) -> None:
+    module.enhancements = config.domain_att_enhance
+    module.additional_heads = sum(module.enhancements.values())
+    for name, size in config.domain_att_enhance.items():
+        setattr(
+            module,
+            f"{name}",
+            nn.Linear(config.hidden_size, module.head_dim * size * 3),
+        )
+
+    module._split_heads = BloomAttention._split_heads.__get__(module, module.__class__)
+    module.forward = BloomAttention.forward.__get__(module, module.__class__)
+
+
 def domain_enhance_att(
     model: MT, domain_att_enhance: Optional[Dict[str, int]] = None
 ) -> MT:
@@ -204,7 +205,9 @@ def domain_enhance_att(
         # if domain enhance, replace modules
         if config_with_enhance.domain_att_enhance:
             nested_replace_module(
-                self, attention_module, lambda _: BloomAttention(config_with_enhance)
+                self,
+                attention_module,
+                lambda _, module: _patch_module(module, config_with_enhance),
             )
 
         self.post_init()

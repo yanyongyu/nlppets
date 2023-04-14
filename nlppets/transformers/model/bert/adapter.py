@@ -48,10 +48,7 @@ class Adapter(nn.Module):
 
 
 class BertSelfOutput(BaseSelfOutput):
-    def __init__(self, config):
-        super().__init__(config)
-
-        self.adapter = Adapter(config)
+    adapter: Adapter
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
@@ -64,10 +61,7 @@ class BertSelfOutput(BaseSelfOutput):
 
 
 class BertOutput(BaseOutput):
-    def __init__(self, config: Config):
-        super(BertOutput, self).__init__(config)
-
-        self.adapter = Adapter(config)
+    adapter: Adapter
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
@@ -77,6 +71,16 @@ class BertOutput(BaseOutput):
         hidden_states = self.adapter(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
+
+
+def _patch_self_output(module: BertSelfOutput, config: Config) -> None:
+    module.adapter = Adapter(config)
+    module.forward = BertSelfOutput.forward.__get__(module)
+
+
+def _patch_output(module: BertOutput, config: Config) -> None:
+    module.adapter = Adapter(config)
+    module.forward = BertOutput.forward.__get__(module)
 
 
 def adapter(model: MT, adapters: Optional[Dict[str, int]] = None) -> MT:
@@ -121,12 +125,12 @@ def adapter(model: MT, adapters: Optional[Dict[str, int]] = None) -> MT:
             nested_replace_module(
                 self,
                 attention_output_module,
-                lambda _: BertSelfOutput(config_with_enhance),
+                lambda _, module: _patch_self_output(module, config_with_enhance),
             )
             nested_replace_module(
                 self,
                 intermediate_output_module,
-                lambda _: BertOutput(config_with_enhance),
+                lambda _, module: _patch_output(module, config_with_enhance),
             )
 
         self.post_init()

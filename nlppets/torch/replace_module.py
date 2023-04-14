@@ -1,5 +1,5 @@
 from contextvars import ContextVar
-from typing import Tuple, Union, TypeVar, Callable
+from typing import Tuple, Union, TypeVar, Callable, Optional
 
 import torch.nn as nn
 
@@ -35,7 +35,9 @@ def replace_module(module: M, child_name: str, new_child: nn.Module) -> M:
 def nested_replace_module(
     module: M,
     child_name: str,
-    new_child: Union[nn.Module, Callable[[Tuple[str, ...]], nn.Module]],
+    new_child: Union[
+        None, nn.Module, Callable[[Tuple[str, ...], nn.Module], Optional[nn.Module]]
+    ],
 ) -> M:
     """Replace a nested child module in a module.
 
@@ -54,9 +56,12 @@ def nested_replace_module(
     current_location = LOC.get(tuple())
     nested_names = child_name.split(".")
     if len(nested_names) == 1:
-        if not isinstance(new_child, nn.Module):
-            new_child = new_child(current_location + (nested_names[0],))
-        replace_module(module, nested_names[0], new_child)
+        if new_child is not None and not isinstance(new_child, nn.Module):
+            new_child = new_child(
+                current_location + (nested_names[0],), getattr(module, nested_names[0])
+            )
+        if new_child is not None:
+            replace_module(module, nested_names[0], new_child)
     elif nested_names[0] == "*":
         for name, child in module.named_children():
             token = LOC.set(current_location + (name,))

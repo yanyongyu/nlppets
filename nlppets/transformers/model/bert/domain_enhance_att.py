@@ -24,28 +24,8 @@ class Config(Protocol):
 
 
 class BertSelfAttention(BaseSelfAttention):
-    def __init__(self, config: "Config"):
-        super(BertSelfAttention, self).__init__(config)
-
-        # added
-        self.enhancements = list(config.domain_att_enhance.keys())
-        self.additional_heads = sum(config.domain_att_enhance.values())
-        for name, size in config.domain_att_enhance.items():
-            setattr(
-                self,
-                f"{name}_query",
-                nn.Linear(config.hidden_size, self.attention_head_size * size),
-            )
-            setattr(
-                self,
-                f"{name}_key",
-                nn.Linear(config.hidden_size, self.attention_head_size * size),
-            )
-            setattr(
-                self,
-                f"{name}_value",
-                nn.Linear(config.hidden_size, self.attention_head_size * size),
-            )
+    enhancements: Dict[str, int]
+    additional_heads: int
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         # [B, L, H] -> [B, L, HN, HS]
@@ -201,19 +181,9 @@ class BertSelfAttention(BaseSelfAttention):
 
 
 class BertSelfOutput(BaseSelfOutput):
-    def __init__(self, config: "Config"):
-        super(BertSelfOutput, self).__init__(config)
-
-        # added
-        self.enhancements = list(config.domain_att_enhance.keys())
-        self.hidden_size = config.hidden_size
-        self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
-        for name, size in config.domain_att_enhance.items():
-            setattr(
-                self,
-                name,
-                nn.Linear(self.attention_head_size * size, config.hidden_size),
-            )
+    enhancements: Dict[str, int]
+    hidden_size: int
+    attention_head_size: int
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
@@ -226,6 +196,49 @@ class BertSelfOutput(BaseSelfOutput):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
+
+
+def _patch_bert_self_attention(module: BertSelfAttention, config: Config) -> None:
+    module.enhancements = config.domain_att_enhance
+    module.additional_heads = sum(config.domain_att_enhance.values())
+    for name, size in config.domain_att_enhance.items():
+        setattr(
+            module,
+            f"{name}_query",
+            nn.Linear(config.hidden_size, module.attention_head_size * size),
+        )
+        setattr(
+            module,
+            f"{name}_key",
+            nn.Linear(config.hidden_size, module.attention_head_size * size),
+        )
+        setattr(
+            module,
+            f"{name}_value",
+            nn.Linear(config.hidden_size, module.attention_head_size * size),
+        )
+
+    module.transpose_for_scores = BertSelfAttention.transpose_for_scores.__get__(
+        module, module.__class__
+    )
+    module._patch_for_domain_enhance = (
+        BertSelfAttention._patch_for_domain_enhance.__get__(module, module.__class__)
+    )
+    module.forward = BertSelfAttention.forward.__get__(module, module.__class__)
+
+
+def _patch_bert_self_output(module: BertSelfOutput, config: Config) -> None:
+    module.enhancements = config.domain_att_enhance
+    module.hidden_size = config.hidden_size
+    module.attention_head_size = int(config.hidden_size / config.num_attention_heads)
+    for name, size in config.domain_att_enhance.items():
+        setattr(
+            module,
+            name,
+            nn.Linear(module.attention_head_size * size, config.hidden_size),
+        )
+
+    module.forward = BertSelfOutput.forward.__get__(module, module.__class__)
 
 
 def domain_enhance_att(
@@ -269,12 +282,16 @@ def domain_enhance_att(
         # if domain enhance, replace modules
         if config_with_enhance.domain_att_enhance:
             nested_replace_module(
-                self, attention_module, lambda _: BertSelfAttention(config_with_enhance)
+                self,
+                attention_module,
+                lambda _, module: _patch_bert_self_attention(
+                    module, config_with_enhance
+                ),
             )
             nested_replace_module(
                 self,
                 attention_output_module,
-                lambda _: BertSelfOutput(config_with_enhance),
+                lambda _, module: _patch_bert_self_output(module, config_with_enhance),
             )
 
         self.post_init()

@@ -20,14 +20,7 @@ class Config(Protocol):
 
 
 class BloomMLP(BaseMLP):
-    def __init__(self, config: Config):
-        super(BloomMLP, self).__init__(cast(BloomConfig, config))
-
-        # added
-        self.enhancements = config.domain_ffn_enhance
-        for name, size in config.domain_ffn_enhance.items():
-            setattr(self, f"{name}_up", nn.Linear(config.hidden_size, size))
-            setattr(self, f"{name}_down", nn.Linear(size, config.hidden_size))
+    enhancements: Dict[str, int]
 
     def forward(
         self, hidden_states: torch.Tensor, residual: torch.Tensor
@@ -48,6 +41,15 @@ class BloomMLP(BaseMLP):
         )(hidden_states)
 
         return dropout_add(hidden_states, residual, self.hidden_dropout, self.training)
+
+
+def _patch_module(module: BloomMLP, config: Config) -> None:
+    module.enhancements = config.domain_ffn_enhance
+    for name, size in config.domain_ffn_enhance.items():
+        setattr(module, f"{name}_up", nn.Linear(config.hidden_size, size))
+        setattr(module, f"{name}_down", nn.Linear(size, config.hidden_size))
+
+    module.forward = BloomMLP.forward.__get__(module, BloomMLP)
 
 
 def domain_enhance_ffn(
@@ -87,7 +89,7 @@ def domain_enhance_ffn(
             nested_replace_module(
                 self,
                 mlp_module,
-                lambda _: BloomMLP(config_with_enhance),
+                lambda _, module: _patch_module(module, config_with_enhance),
             )
 
         self.post_init()
