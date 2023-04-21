@@ -1,5 +1,17 @@
 import math
-from typing import Any, Dict, Type, Tuple, Literal, TypeVar, Optional, Protocol, cast
+import inspect
+from typing import (
+    Any,
+    Dict,
+    Type,
+    Tuple,
+    Union,
+    Literal,
+    TypeVar,
+    Optional,
+    Protocol,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -13,7 +25,7 @@ from transformers.models.bert.modeling_bert import (
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
+MT = TypeVar("MT", bound=Union[BertPreTrainedModel, Type[BertPreTrainedModel]])
 
 
 class Config(Protocol):
@@ -247,57 +259,65 @@ def domain_enhance_att(
     """Modify BERT model to apply self attention domain enhancement.
 
     Args:
-        model (Type[BertPreTrainedModel]): Original BERT model class.
+        model (BertPreTrainedModel | Type[BertPreTrainedModel]): Original BERT model class.
         domain_att_enhance (Optional[Dict[str, int]]): Domain enhancements.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[BertPreTrainedModel]: Patched model class
+        BertPreTrainedModel | Type[BertPreTrainedModel]: Patched model class
     """
     attention_module: str = (
         "encoder.layer.*.attention.self"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.attention.self"
     )
     attention_output_module: str = (
         "encoder.layer.*.attention.output"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.attention.output"
     )
 
-    model = cast(MT, model)
-
-    origin_init = model.__init__
-
-    def patched_init(
-        self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
-    ):
-        origin_init(self, config, *inputs, **kwargs)
-
+    def _patch_model(m: BertPreTrainedModel):
         # patch config if new enhancement provided
         if domain_att_enhance is not None:
-            config.domain_att_enhance = domain_att_enhance
+            m.config.domain_att_enhance = domain_att_enhance
 
-        config_with_enhance = cast(Config, config)
+        config_with_enhance = cast(Config, m.config)
         # if domain enhance, replace modules
         if config_with_enhance.domain_att_enhance:
             nested_replace_module(
-                self,
+                m,
                 attention_module,
                 lambda _, module: _patch_bert_self_attention(
                     module, config_with_enhance
                 ),
             )
             nested_replace_module(
-                self,
+                m,
                 attention_output_module,
                 lambda _, module: _patch_bert_self_output(module, config_with_enhance),
             )
 
+    if not inspect.isclass(model):
+        m = cast(BertPreTrainedModel, model)
+        _patch_model(m)
+        return m  # type: ignore
+
+    mc = cast(Type[BertPreTrainedModel], model)
+
+    origin_init = mc.__init__
+
+    def patched_init(
+        self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
+    ):
+        origin_init(self, config, *inputs, **kwargs)
+
+        _patch_model(self)
+
         self.post_init()
 
-    model = type(
-        f"{model.__name__}_EnhanceAtt", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    mc = type(f"{mc.__name__}_EnhanceAtt", (mc,), {"__init__": patched_init})
 
-    return model
+    return mc  # type: ignore

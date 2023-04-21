@@ -19,7 +19,7 @@ from transformers import PreTrainedModel, PretrainedConfig
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[PreTrainedModel])
+MT = TypeVar("MT", bound=PreTrainedModel)
 
 
 class Config(Protocol):
@@ -47,133 +47,6 @@ def apply_rotary_pos_emb_index(
         position_id, sin.squeeze(1)
     ).unsqueeze(2)
     return (q * cos) + (rotate_half(q) * sin), (k * cos) + (rotate_half(k) * sin)
-
-
-def attention_fn(
-    module: "ChatGLMAttention",
-    query_layer: torch.Tensor,
-    key_layer: torch.Tensor,
-    value_layer: torch.Tensor,
-    attention_mask: torch.Tensor,
-    hidden_size_per_partition: int,
-    layer_id: int,
-    layer_past: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    scaling_attention_score: bool = True,
-    use_cache: bool = False,
-):
-    if layer_past is not None:
-        past_key, past_value = layer_past[0], layer_past[1]
-        key_layer = torch.cat((past_key, key_layer), dim=0)
-        value_layer = torch.cat((past_value, value_layer), dim=0)
-
-    # seqlen, batch, num_attention_heads, hidden_size_per_attention_head
-    seq_len, b, nh, hidden_size = key_layer.shape
-
-    if use_cache:
-        present = (key_layer, value_layer)
-    else:
-        present = None
-
-    query_key_layer_scaling_coeff = float(layer_id + 1)
-    if scaling_attention_score:
-        query_layer = query_layer / (
-            math.sqrt(hidden_size) * query_key_layer_scaling_coeff
-        )
-
-    # ===================================
-    # Raw attention scores. [b, np, s, s]
-    # ===================================
-
-    # [b, np, sq, sk]
-    output_size = (
-        query_layer.size(1),
-        query_layer.size(2),
-        query_layer.size(0),
-        key_layer.size(0),
-    )
-
-    # [sq, b, np, hn] -> [sq, b * np, hn]
-    query_layer = query_layer.view(output_size[2], output_size[0] * output_size[1], -1)
-    # [sk, b, np, hn] -> [sk, b * np, hn]
-    key_layer = key_layer.view(output_size[3], output_size[0] * output_size[1], -1)
-
-    matmul_result = torch.zeros(
-        1,
-        1,
-        1,
-        dtype=query_layer.dtype,
-        device=query_layer.device,
-    )
-
-    matmul_result = torch.baddbmm(
-        matmul_result,
-        query_layer.transpose(0, 1),  # [b * np, sq, hn]
-        key_layer.transpose(0, 1).transpose(1, 2),  # [b * np, hn, sk]
-        beta=0.0,
-        alpha=1.0,
-    )
-
-    # change view to [b, np, sq, sk]
-    attention_scores = matmul_result.view(*output_size)
-
-    if module.scale_mask_softmax:
-        module.scale_mask_softmax.scale = query_key_layer_scaling_coeff
-        attention_probs = module.scale_mask_softmax(
-            attention_scores, attention_mask.contiguous()
-        )
-    else:
-        if not (attention_mask == 0).all():
-            # if auto-regressive, skip
-            attention_scores.masked_fill_(attention_mask, -10000.0)
-        dtype = attention_scores.dtype
-        attention_scores = attention_scores.float()
-        attention_scores = attention_scores * query_key_layer_scaling_coeff
-
-        attention_probs = F.softmax(attention_scores, dim=-1)
-
-        attention_probs = attention_probs.type(dtype)
-
-    # =========================
-    # Context layer. [sq, b, hp]
-    # =========================
-
-    # value_layer -> context layer.
-    # [sk, b, np, hn] --> [b, np, sq, hn]
-
-    # context layer shape: [b, np, sq, hn]
-    output_size = (
-        value_layer.size(1),
-        value_layer.size(2),
-        query_layer.size(0),
-        value_layer.size(3),
-    )
-
-    # change view [sk, b * np, hn]
-    value_layer = value_layer.view(
-        value_layer.size(0), output_size[0] * output_size[1], -1
-    )
-
-    # change view [b * np, sq, sk]
-    attention_probs = attention_probs.view(
-        output_size[0] * output_size[1], output_size[2], -1
-    )
-
-    # matmul: [b * np, sq, hn]
-    context_layer = torch.bmm(attention_probs, value_layer.transpose(0, 1))
-
-    # change view [b, np, sq, hn]
-    context_layer = context_layer.view(*output_size)
-
-    # [b, np, sq, hn] --> [sq, b, np, hn]
-    context_layer = context_layer.permute(2, 0, 1, 3).contiguous()
-
-    # [sq, b, np, hn] --> [sq, b, hp]
-    new_context_layer_shape = context_layer.size()[:-2] + (hidden_size_per_partition,)
-    context_layer = context_layer.view(*new_context_layer_shape)
-
-    outputs = (context_layer, present, attention_probs)
-
-    return outputs
 
 
 class ChatGLMAttention:
@@ -368,15 +241,15 @@ def _patch_module(module: ChatGLMAttention, config: Config) -> None:
 def domain_enhance_att(
     model: MT, domain_att_enhance: Optional[Dict[str, int]] = None
 ) -> MT:
-    """Modify BLOOM model to apply self attention domain enhancement.
+    """Modify ChatGLM model to apply self attention domain enhancement.
 
     Args:
-        model (Type[BloomPreTrainedModel]): Original BLOOM model class.
+        model (ChatGLMPreTrainedModel): Original ChatGLM model.
         domain_att_enhance (Optional[Dict[str, int]]): Domain enhancements.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[BloomPreTrainedModel]: Patched model class
+        ChatGLMPreTrainedModel: Patched model
     """
     attention_module: str = (
         "transformer.layers.*.attention"
@@ -384,32 +257,17 @@ def domain_enhance_att(
         else "layers.*.attention"
     )
 
-    model = cast(MT, model)
+    # patch config if new enhancement provided
+    if domain_att_enhance is not None:
+        model.config.domain_att_enhance = domain_att_enhance
 
-    origin_init = model.__init__
-
-    def patched_init(
-        self: PreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
-    ):
-        origin_init(self, config, *inputs, **kwargs)
-
-        # patch config if new enhancement provided
-        if domain_att_enhance is not None:
-            config.domain_att_enhance = domain_att_enhance
-
-        config_with_enhance = cast(Config, config)
-        # if domain enhance, replace modules
-        if config_with_enhance.domain_att_enhance:
-            nested_replace_module(
-                self,
-                attention_module,
-                lambda _, module: _patch_module(module, config_with_enhance),
-            )
-
-        self.post_init()
-
-    model = type(
-        f"{model.__name__}_EnhanceAtt", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    config_with_enhance = cast(Config, model.config)
+    # if domain enhance, replace modules
+    if config_with_enhance.domain_att_enhance:
+        nested_replace_module(
+            model,
+            attention_module,
+            lambda _, module: _patch_module(module, config_with_enhance),
+        )
 
     return model

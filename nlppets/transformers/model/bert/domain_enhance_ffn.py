@@ -1,4 +1,5 @@
-from typing import Dict, Type, TypeVar, Optional, Protocol, cast
+import inspect
+from typing import Dict, Type, Union, TypeVar, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
@@ -9,7 +10,7 @@ from transformers.models.bert.modeling_bert import BertIntermediate as BaseInter
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
+MT = TypeVar("MT", bound=Union[BertPreTrainedModel, Type[BertPreTrainedModel]])
 
 
 class Config(Protocol):
@@ -69,56 +70,64 @@ def domain_enhance_ffn(
     """Modify BERT model to apply feed-forward network domain enhancement.
 
     Args:
-        model (Type[BertPreTrainedModel]): Original BERT model class.
+        model (BertPreTrainedModel| Type[BertPreTrainedModel]): Original BERT model class.
         domain_ffn_enhance (Optional[Dict[str, int]]):
             Domain enhancements. key for name, value for size.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[BertPreTrainedModel]: Patched model class
+        BertPreTrainedModel| Type[BertPreTrainedModel]: Patched model class
     """
     intermediate_module: str = (
         "encoder.layer.*.intermediate"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.intermediate"
     )
     intermediate_output_module: str = (
         "encoder.layer.*.output"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.output"
     )
 
-    model = cast(MT, model)
+    def _patch_model(m: BertPreTrainedModel):
+        # patch config if new enhancement provided
+        if domain_ffn_enhance is not None:
+            m.config.domain_ffn_enhance = domain_ffn_enhance
 
-    origin_init = model.__init__
+        config_with_enhance = cast(Config, m.config)
+        # if domain enhance, replace modules
+        if config_with_enhance.domain_ffn_enhance:
+            nested_replace_module(
+                m,
+                intermediate_module,
+                lambda *_: BertIntermediate(config_with_enhance),
+            )
+            nested_replace_module(
+                m,
+                intermediate_output_module,
+                lambda *_: BertOutput(config_with_enhance),
+            )
+
+    if not inspect.isclass(model):
+        m = cast(BertPreTrainedModel, model)
+        _patch_model(m)
+        return m  # type: ignore
+
+    mc = cast(Type[BertPreTrainedModel], model)
+
+    origin_init = mc.__init__
 
     def patched_init(
         self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
     ):
         origin_init(self, config, *inputs, **kwargs)
 
-        # patch config if new enhancement provided
-        if domain_ffn_enhance is not None:
-            config.domain_ffn_enhance = domain_ffn_enhance
-
-        config_with_enhance = cast(Config, config)
-        # if domain enhance, replace modules
-        if config_with_enhance.domain_ffn_enhance:
-            nested_replace_module(
-                self,
-                intermediate_module,
-                lambda *_: BertIntermediate(config_with_enhance),
-            )
-            nested_replace_module(
-                self,
-                intermediate_output_module,
-                lambda *_: BertOutput(config_with_enhance),
-            )
+        _patch_model(self)
 
         self.post_init()
 
-    model = type(
-        f"{model.__name__}_EnhanceFFN", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    mc = type(f"{mc.__name__}_EnhanceFFN", (mc,), {"__init__": patched_init})
 
-    return model
+    return mc  # type: ignore

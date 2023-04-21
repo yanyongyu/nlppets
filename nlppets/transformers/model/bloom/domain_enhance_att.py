@@ -1,5 +1,17 @@
 import math
-from typing import Any, Dict, Type, Tuple, Literal, TypeVar, Optional, Protocol, cast
+import inspect
+from typing import (
+    Any,
+    Dict,
+    Type,
+    Tuple,
+    Union,
+    Literal,
+    TypeVar,
+    Optional,
+    Protocol,
+    cast,
+)
 
 import torch
 import torch.nn as nn
@@ -11,7 +23,7 @@ from transformers.models.bloom.modeling_bloom import BloomAttention as BaseAtten
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[BloomPreTrainedModel])
+MT = TypeVar("MT", bound=Union[BloomPreTrainedModel, Type[BloomPreTrainedModel]])
 
 
 class Config(Protocol):
@@ -175,45 +187,52 @@ def domain_enhance_att(
     """Modify BLOOM model to apply self attention domain enhancement.
 
     Args:
-        model (Type[BloomPreTrainedModel]): Original BLOOM model class.
+        model (BloomPreTrainedModel | Type[BloomPreTrainedModel]): Original BLOOM model class.
         domain_att_enhance (Optional[Dict[str, int]]): Domain enhancements.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[BloomPreTrainedModel]: Patched model class
+        BloomPreTrainedModel | Type[BloomPreTrainedModel]: Patched model class
     """
     attention_module: str = (
         "h.*.self_attention"
-        if issubclass(model, BloomModel)
+        if isinstance(model, BloomModel)
+        or (inspect.isclass(model) and issubclass(model, BloomModel))
         else "transformer.h.*.self_attention"
     )
 
-    model = cast(MT, model)
+    def _patch_model(m: BloomPreTrainedModel):
+        # patch config if new enhancement provided
+        if domain_att_enhance is not None:
+            m.config.domain_att_enhance = domain_att_enhance
 
-    origin_init = model.__init__
+        config_with_enhance = cast(Config, m.config)
+        # if domain enhance, replace modules
+        if config_with_enhance.domain_att_enhance:
+            nested_replace_module(
+                m,
+                attention_module,
+                lambda _, module: _patch_module(module, config_with_enhance),
+            )
+
+    if not inspect.isclass(model):
+        m = cast(BloomPreTrainedModel, model)
+        _patch_model(m)
+        return m  # type: ignore
+
+    mc = cast(Type[BloomPreTrainedModel], model)
+
+    origin_init = mc.__init__
 
     def patched_init(
         self: BloomPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
     ):
         origin_init(self, config, *inputs, **kwargs)
 
-        # patch config if new enhancement provided
-        if domain_att_enhance is not None:
-            config.domain_att_enhance = domain_att_enhance
-
-        config_with_enhance = cast(Config, config)
-        # if domain enhance, replace modules
-        if config_with_enhance.domain_att_enhance:
-            nested_replace_module(
-                self,
-                attention_module,
-                lambda _, module: _patch_module(module, config_with_enhance),
-            )
+        _patch_model(self)
 
         self.post_init()
 
-    model = type(
-        f"{model.__name__}_EnhanceAtt", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    mc = type(f"{mc.__name__}_EnhanceAtt", (mc,), {"__init__": patched_init})
 
-    return model
+    return mc  # type: ignore

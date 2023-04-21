@@ -6,7 +6,7 @@ from transformers import PreTrainedModel, PretrainedConfig
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[PreTrainedModel])
+MT = TypeVar("MT", bound=PreTrainedModel)
 
 
 class Config(Protocol):
@@ -60,44 +60,29 @@ def domain_enhance_ffn(
     """Modify ChatGLM model to apply feed-forward network domain enhancement.
 
     Args:
-        model (Type[ChatGLMPreTrainedModel]): Original ChatGLM model class.
+        model (ChatGLMPreTrainedModel): Original ChatGLM model.
         domain_ffn_enhance (Optional[Dict[str, int]]):
             Domain enhancements. key for name, value for size.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[ChatGLMPreTrainedModel]: Patched model class
+        ChatGLMPreTrainedModel: Patched model
     """
     mlp_module: str = (
         "transformer.layers.*.mlp" if hasattr(model, "transformer") else "layers.*.mlp"
     )
 
-    model = cast(MT, model)
+    # patch config if new enhancement provided
+    if domain_ffn_enhance is not None:
+        model.config.domain_ffn_enhance = domain_ffn_enhance
 
-    origin_init = model.__init__
-
-    def patched_init(
-        self: PreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
-    ):
-        origin_init(self, config, *inputs, **kwargs)
-
-        # patch config if new enhancement provided
-        if domain_ffn_enhance is not None:
-            config.domain_ffn_enhance = domain_ffn_enhance
-
-        config_with_enhance = cast(Config, config)
-        # if domain enhance, replace modules
-        if config_with_enhance.domain_ffn_enhance:
-            nested_replace_module(
-                self,
-                mlp_module,
-                lambda _, module: _patch_module(module, config_with_enhance),
-            )
-
-        self.post_init()
-
-    model = type(
-        f"{model.__name__}_EnhanceFFN", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    config_with_enhance = cast(Config, model.config)
+    # if domain enhance, replace modules
+    if config_with_enhance.domain_ffn_enhance:
+        nested_replace_module(
+            model,
+            mlp_module,
+            lambda _, module: _patch_module(module, config_with_enhance),
+        )
 
     return model

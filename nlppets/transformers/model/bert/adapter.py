@@ -1,3 +1,4 @@
+import inspect
 from typing import Any, Dict, Type, Union, TypeVar, Optional, Protocol, cast
 
 import torch
@@ -10,7 +11,7 @@ from transformers.models.bert.modeling_bert import BertSelfOutput as BaseSelfOut
 
 from nlppets.torch import concat_linear, nested_replace_module
 
-MT = TypeVar("MT", bound=Type[BertPreTrainedModel])
+MT = TypeVar("MT", bound=Union[BertPreTrainedModel, Type[BertPreTrainedModel]])
 
 
 class Config(Protocol):
@@ -87,56 +88,64 @@ def adapter(model: MT, adapters: Optional[Dict[str, int]] = None) -> MT:
     """Modify BERT model to apply feed-forward adapter.
 
     Args:
-        model (Type[BertPreTrainedModel]): Original BERT model class.
+        model (BertPreTrainedModel, Type[BertPreTrainedModel]): Original BERT model class.
         adapters (Optional[Dict[str, int]]):
             Adapters. key for name, value for size.
             If None is provided, will read from existing configs.
 
     Returns:
-        Type[BertPreTrainedModel]: Patched model class
+        BertPreTrainedModel, Type[BertPreTrainedModel]: Patched model class
     """
     attention_output_module: str = (
         "encoder.layer.*.attention.output"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.attention.output"
     )
     intermediate_output_module: str = (
         "encoder.layer.*.output"
-        if issubclass(model, BertModel)
+        if isinstance(model, BertModel)
+        or (inspect.isclass(model) and issubclass(model, BertModel))
         else "bert.encoder.layer.*.output"
     )
 
-    model = cast(MT, model)
+    def _patch_model(m: BertPreTrainedModel):
+        # patch config if new enhancement provided
+        if adapters is not None:
+            m.config.adapters = adapters
 
-    origin_init = model.__init__
+        config_with_enhance = cast(Config, m.config)
+        # if domain enhance, replace modules
+        if config_with_enhance.adapters:
+            nested_replace_module(
+                m,
+                attention_output_module,
+                lambda _, module: _patch_self_output(module, config_with_enhance),
+            )
+            nested_replace_module(
+                m,
+                intermediate_output_module,
+                lambda _, module: _patch_output(module, config_with_enhance),
+            )
+
+    if not inspect.isclass(model):
+        m = cast(BertPreTrainedModel, model)
+        _patch_model(m)
+        return m  # type: ignore
+
+    mc = cast(Type[BertPreTrainedModel], model)
+
+    origin_init = mc.__init__
 
     def patched_init(
         self: BertPreTrainedModel, config: PretrainedConfig, *inputs, **kwargs
     ):
         origin_init(self, config, *inputs, **kwargs)
 
-        # patch config if new enhancement provided
-        if adapters is not None:
-            config.adapters = adapters
-
-        config_with_enhance = cast(Config, config)
-        # if domain enhance, replace modules
-        if config_with_enhance.adapters:
-            nested_replace_module(
-                self,
-                attention_output_module,
-                lambda _, module: _patch_self_output(module, config_with_enhance),
-            )
-            nested_replace_module(
-                self,
-                intermediate_output_module,
-                lambda _, module: _patch_output(module, config_with_enhance),
-            )
+        _patch_model(self)
 
         self.post_init()
 
-    model = type(
-        f"{model.__name__}_Adapter", (model,), {"__init__": patched_init}
-    )  # type: ignore
+    mc = type(f"{mc.__name__}_Adapter", (mc,), {"__init__": patched_init})
 
-    return model
+    return mc  # type: ignore
