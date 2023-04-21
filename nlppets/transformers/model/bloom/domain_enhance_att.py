@@ -154,7 +154,10 @@ class BloomAttention(BaseAttention):
         # [B * (HN + EN), L, HS] -> [B, L, (HN + EN) * HS]
         context_layer = self._merge_heads(context_layer)
 
-        output_tensor = self.dense(context_layer)
+        output_tensor = concat_linear(
+            self.dense,
+            *(getattr(self, f"{name}_output") for name in self.enhancements.keys()),
+        )(context_layer)
 
         output_tensor = dropout_add(
             output_tensor, residual, self.hidden_dropout, self.training
@@ -175,6 +178,11 @@ def _patch_module(module: BloomAttention, config: Config) -> None:
             module,
             f"{name}",
             nn.Linear(config.hidden_size, module.head_dim * size * 3),
+        )
+        setattr(
+            module,
+            f"{name}_output",
+            nn.Linear(module.head_dim * size, config.hidden_size),
         )
 
     module._split_heads = BloomAttention._split_heads.__get__(module, module.__class__)

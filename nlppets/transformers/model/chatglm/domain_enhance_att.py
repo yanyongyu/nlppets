@@ -213,7 +213,10 @@ class ChatGLMAttention:
         )
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        output = self.dense(context_layer)
+        output = concat_linear(
+            self.dense,
+            *(getattr(self, f"{name}_output") for name in self.enhancements.keys()),
+        )(context_layer)
 
         outputs = (output, present)
 
@@ -233,6 +236,11 @@ def _patch_module(module: ChatGLMAttention, config: Config) -> None:
             nn.Linear(
                 config.hidden_size, module.hidden_size_per_attention_head * size * 3
             ),
+        )
+        setattr(
+            module,
+            f"{name}_output",
+            nn.Linear(module.hidden_size_per_attention_head * size, config.hidden_size),
         )
 
     module.forward = ChatGLMAttention.forward.__get__(module, module.__class__)
