@@ -189,7 +189,7 @@ class ChatGLMAttention:
         # output_size = (value_layer.size(1), value_layer.size(2), query_layer.size(0), value_layer.size(3))
 
         # [kv_length, B, (HN + EN), HS] -> [kv_length, B * (HN + EN), HS]
-        value_layer = value_layer.view(seq_length, batch_size * num_heads, hidden_size)
+        value_layer = value_layer.view(kv_length, batch_size * num_heads, hidden_size)
 
         # [B, (HN + EN), L, kv_length] -> [B * (HN + EN), L, kv_length]
         attention_probs = attention_probs.view(
