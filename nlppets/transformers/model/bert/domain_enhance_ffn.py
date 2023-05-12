@@ -21,13 +21,7 @@ class Config(Protocol):
 
 
 class BertIntermediate(BaseIntermediate):
-    def __init__(self, config: Config):
-        super(BertIntermediate, self).__init__(config)
-
-        # added
-        self.enhancements = list(config.domain_ffn_enhance.keys())
-        for name, size in config.domain_ffn_enhance.items():
-            setattr(self, name, nn.Linear(config.hidden_size, size))
+    enhancements: Dict[str, int]
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # patched for domain enhancements
@@ -41,15 +35,7 @@ class BertIntermediate(BaseIntermediate):
 
 
 class BertOutput(BaseOutput):
-    def __init__(self, config: Config):
-        super(BertOutput, self).__init__(config)
-
-        self.intermediate_size = config.intermediate_size
-
-        # added
-        self.enhancements = config.domain_ffn_enhance
-        for name, size in config.domain_ffn_enhance.items():
-            setattr(self, name, nn.Linear(size, config.hidden_size))
+    enhancements: Dict[str, int]
 
     def forward(
         self, hidden_states: torch.Tensor, input_tensor: torch.Tensor
@@ -62,6 +48,20 @@ class BertOutput(BaseOutput):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
+
+
+def _patch_bert_intermediate(module: BertIntermediate, config: Config):
+    module.enhancements = config.domain_ffn_enhance
+    for name, size in config.domain_ffn_enhance.items():
+        setattr(module, name, nn.Linear(config.hidden_size, size))
+    module.forward = BertIntermediate.forward.__get__(module, module.__class__)
+
+
+def _patch_bert_output(module: BertOutput, config: Config):
+    module.enhancements = config.domain_ffn_enhance
+    for name, size in config.domain_ffn_enhance.items():
+        setattr(module, name, nn.Linear(size, config.hidden_size))
+    module.forward = BertOutput.forward.__get__(module, module.__class__)
 
 
 def domain_enhance_ffn(
@@ -102,12 +102,12 @@ def domain_enhance_ffn(
             nested_replace_module(
                 m,
                 intermediate_module,
-                lambda *_: BertIntermediate(config_with_enhance),
+                lambda _, module: _patch_bert_intermediate(module, config_with_enhance),
             )
             nested_replace_module(
                 m,
                 intermediate_output_module,
-                lambda *_: BertOutput(config_with_enhance),
+                lambda _, module: _patch_bert_output(module, config_with_enhance),
             )
 
     if not inspect.isclass(model):
