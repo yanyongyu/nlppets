@@ -1,12 +1,18 @@
+import inspect
+from functools import wraps
+from typing_extensions import ParamSpec, Concatenate
 from typing import Dict, Type, TypeVar, Callable, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, PretrainedConfig
 
-from nlppets.torch import concat_linear, nested_replace_module
+from nlppets.general import MonkeyPatch
+from nlppets.torch import concat_linear
 
-MT = TypeVar("MT", bound=PreTrainedModel)
+P = ParamSpec("P")
+R = TypeVar("R")
+MT = TypeVar("MT", bound=Type[PreTrainedModel])
 
 
 class Config(Protocol):
@@ -16,13 +22,32 @@ class Config(Protocol):
     """domain pre-training enhancements. key for name, value for size."""
 
 
-class ChatGLMMLP:
+class ChatGLMMLP(nn.Module):
     enhancements: Dict[str, int]
     hidden_size: int
     inner_hidden_size: int
     dense_h_to_4h: torch.nn.Linear
     dense_4h_to_h: torch.nn.Linear
     activation_func: Callable[[torch.Tensor], torch.Tensor]
+
+    def __init__(
+        self,
+        config: Config,
+        origin_init: Callable[Concatenate[nn.Module, P], None],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> None:
+        origin_init(self, *args, **kwargs)
+
+        dtype = self.dense_h_to_4h.weight.dtype
+        self.enhancements = config.domain_ffn_enhance
+        for name, size in config.domain_ffn_enhance.items():
+            setattr(
+                self, f"{name}_up", nn.Linear(config.hidden_size, size, dtype=dtype)
+            )
+            setattr(
+                self, f"{name}_down", nn.Linear(size, config.hidden_size, dtype=dtype)
+            )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         # patched for domain enhancements
@@ -41,48 +66,55 @@ class ChatGLMMLP:
         )(hidden_states)
 
 
-def _patch_module(module: ChatGLMMLP, config: Config) -> None:
-    dtype = module.dense_h_to_4h.weight.dtype
-
-    module.enhancements = config.domain_ffn_enhance
-    for name, size in config.domain_ffn_enhance.items():
-        setattr(module, f"{name}_up", nn.Linear(config.hidden_size, size, dtype=dtype))
-        setattr(
-            module, f"{name}_down", nn.Linear(size, config.hidden_size, dtype=dtype)
-        )
-
-    module.forward = ChatGLMMLP.forward.__get__(module, ChatGLMMLP)
-
-
 def domain_enhance_ffn(
     model: MT, domain_ffn_enhance: Optional[Dict[str, int]] = None
 ) -> MT:
     """Modify ChatGLM model to apply feed-forward network domain enhancement.
 
     Args:
-        model (ChatGLMPreTrainedModel): Original ChatGLM model.
+        model (Type[ChatGLMPreTrainedModel]): Original ChatGLM model.
         domain_ffn_enhance (Optional[Dict[str, int]]):
             Domain enhancements. key for name, value for size.
             If None is provided, will read from existing configs.
 
     Returns:
-        ChatGLMPreTrainedModel: Patched model
+        Type[ChatGLMPreTrainedModel]: Patched model
     """
-    mlp_module: str = (
-        "transformer.layers.*.mlp" if hasattr(model, "transformer") else "layers.*.mlp"
-    )
 
-    # patch config if new enhancement provided
-    if domain_ffn_enhance is not None:
-        model.config.domain_ffn_enhance = domain_ffn_enhance
+    model = cast(MT, model)
 
-    config_with_enhance = cast(Config, model.config)
-    # if domain enhance, replace modules
-    if config_with_enhance.domain_ffn_enhance:
-        nested_replace_module(
-            model,
-            mlp_module,
-            lambda _, module: _patch_module(module, config_with_enhance),
-        )
+    origin_init = model.__init__
+    chatglm_module = inspect.getmodule(model)
+    origin_mlp = getattr(chatglm_module, "GLU")
 
-    return model
+    def patched_init(self: PreTrainedModel, config: PretrainedConfig, *args, **kwargs):
+        # patch config if new enhancement provided
+        if domain_ffn_enhance is not None:
+            config.domain_ffn_enhance = domain_ffn_enhance
+
+        config_with_enhance = cast(Config, config)
+
+        with MonkeyPatch.context() as m:
+            m.setattr(
+                chatglm_module,
+                "GLU",
+                lambda *a, **b: ChatGLMMLP(
+                    config_with_enhance, origin_mlp.__init__, *a, **b
+                ),
+            )
+
+            origin_init(self, config, *args, **kwargs)
+
+    return wraps(
+        model,
+        assigned=(
+            "__module__",
+            "__name__",
+            "__qualname__",
+            "__doc__",
+            "__annotations__",
+        ),
+        updated=(),
+    )(
+        type(f"{model.__name__}_EnhanceFFN", (model,), {"__init__": patched_init})
+    )  # type: ignore

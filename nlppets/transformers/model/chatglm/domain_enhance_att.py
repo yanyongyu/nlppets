@@ -1,25 +1,20 @@
 import math
-from typing import (
-    Any,
-    Dict,
-    Type,
-    Tuple,
-    Literal,
-    TypeVar,
-    Callable,
-    Optional,
-    Protocol,
-    cast,
-)
+import inspect
+from functools import wraps
+from typing_extensions import ParamSpec, Concatenate
+from typing import Any, Dict, Type, Tuple, TypeVar, Callable, Optional, Protocol, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PretrainedConfig
 
-from nlppets.torch import concat_linear, nested_replace_module
+from nlppets.general import MonkeyPatch
+from nlppets.torch import concat_linear
 
-MT = TypeVar("MT", bound=PreTrainedModel)
+P = ParamSpec("P")
+R = TypeVar("R")
+MT = TypeVar("MT", bound=Type[PreTrainedModel])
 
 
 class Config(Protocol):
@@ -27,6 +22,10 @@ class Config(Protocol):
     num_attention_heads: int
     domain_att_enhance: Dict[str, int]
     """domain pre-training enhancements."""
+
+
+def default_init(cls: Callable[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    return cls(*args, **kwargs)
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
@@ -49,9 +48,7 @@ def apply_rotary_pos_emb_index(
     return (q * cos) + (rotate_half(q) * sin), (k * cos) + (rotate_half(k) * sin)
 
 
-class ChatGLMAttention:
-    enhancements: Dict[str, int]
-    additional_heads: int
+class ChatGLMAttention(nn.Module):
     layer_id: int
     hidden_size: int
     hidden_size_per_partition: int
@@ -64,7 +61,54 @@ class ChatGLMAttention:
     scale_mask_softmax: Any
     query_key_value: torch.nn.Linear
     dense: torch.nn.Linear
-    split_tensor_along_last_dim: Callable[[torch.Tensor, int], Tuple[torch.Tensor, ...]]
+
+    def __init__(
+        self,
+        config: Config,
+        origin_init: Callable[Concatenate[nn.Module, P], None],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ):
+        origin_init(self, *args, **kwargs)
+
+        self.enhancements = config.domain_att_enhance
+        self.additional_heads = sum(self.enhancements.values())
+        for name, size in config.domain_att_enhance.items():
+            setattr(
+                self,
+                f"{name}",
+                nn.Linear(
+                    config.hidden_size, self.hidden_size_per_attention_head * size * 3
+                ),
+            )
+            setattr(
+                self,
+                f"{name}_output",
+                nn.Linear(
+                    self.hidden_size_per_attention_head * size, config.hidden_size
+                ),
+            )
+
+    def split_tensor_along_last_dim(
+        self, tensor, num_partitions, contiguous_split_chunks=False
+    ):
+        """Split a tensor along its last dimension.
+        Arguments:
+            tensor: input tensor.
+            num_partitions: number of partitions to split the tensor
+            contiguous_split_chunks: If True, make each chunk contiguous
+                                    in memory.
+        """
+        # Get the size and dimension.
+        last_dim = tensor.dim() - 1
+        last_dim_size = tensor.size()[last_dim] // num_partitions
+        # Split.
+        tensor_list = torch.split(tensor, last_dim_size, dim=last_dim)
+        # Note: torch.split does not create contiguous tensors by default.
+        if contiguous_split_chunks:
+            return tuple(chunk.contiguous() for chunk in tensor_list)
+
+        return tensor_list
 
     def forward(
         self,
@@ -226,56 +270,54 @@ class ChatGLMAttention:
         return outputs
 
 
-def _patch_module(module: ChatGLMAttention, config: Config) -> None:
-    module.enhancements = config.domain_att_enhance
-    module.additional_heads = sum(module.enhancements.values())
-    for name, size in config.domain_att_enhance.items():
-        setattr(
-            module,
-            f"{name}",
-            nn.Linear(
-                config.hidden_size, module.hidden_size_per_attention_head * size * 3
-            ),
-        )
-        setattr(
-            module,
-            f"{name}_output",
-            nn.Linear(module.hidden_size_per_attention_head * size, config.hidden_size),
-        )
-
-    module.forward = ChatGLMAttention.forward.__get__(module, module.__class__)
-
-
 def domain_enhance_att(
     model: MT, domain_att_enhance: Optional[Dict[str, int]] = None
 ) -> MT:
     """Modify ChatGLM model to apply self attention domain enhancement.
 
     Args:
-        model (ChatGLMPreTrainedModel): Original ChatGLM model.
+        model (Type[ChatGLMPreTrainedModel]): Original ChatGLM model class.
         domain_att_enhance (Optional[Dict[str, int]]): Domain enhancements.
             If None is provided, will read from existing configs.
 
     Returns:
-        ChatGLMPreTrainedModel: Patched model
+        Type[ChatGLMPreTrainedModel]: Patched model class
     """
-    attention_module: str = (
-        "transformer.layers.*.attention"
-        if hasattr(model, "transformer")
-        else "layers.*.attention"
-    )
 
-    # patch config if new enhancement provided
-    if domain_att_enhance is not None:
-        model.config.domain_att_enhance = domain_att_enhance
+    model = cast(MT, model)
 
-    config_with_enhance = cast(Config, model.config)
-    # if domain enhance, replace modules
-    if config_with_enhance.domain_att_enhance:
-        nested_replace_module(
-            model,
-            attention_module,
-            lambda _, module: _patch_module(module, config_with_enhance),
-        )
+    origin_init = model.__init__
+    chatglm_module = inspect.getmodule(model)
+    origin_attention = getattr(chatglm_module, "SelfAttention")
 
-    return model
+    def patched_init(self: PreTrainedModel, config: PretrainedConfig, *args, **kwargs):
+        # patch config if new enhancement provided
+        if domain_att_enhance is not None:
+            config.domain_att_enhance = domain_att_enhance
+
+        config_with_enhance = cast(Config, config)
+
+        with MonkeyPatch.context() as m:
+            m.setattr(
+                chatglm_module,
+                "SelfAttention",
+                lambda *a, **b: ChatGLMAttention(
+                    config_with_enhance, origin_attention.__init__, *a, **b
+                ),
+            )
+
+            origin_init(self, config, *args, **kwargs)
+
+    return wraps(
+        model,
+        assigned=(
+            "__module__",
+            "__name__",
+            "__qualname__",
+            "__doc__",
+            "__annotations__",
+        ),
+        updated=(),
+    )(
+        type(f"{model.__name__}_EnhanceAtt", (model,), {"__init__": patched_init})
+    )  # type: ignore
