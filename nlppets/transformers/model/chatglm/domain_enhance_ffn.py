@@ -1,5 +1,6 @@
 import inspect
 from functools import wraps
+from contextvars import ContextVar
 from typing import Dict, Type, TypeVar, Callable, Optional, Protocol, cast
 
 import torch
@@ -11,6 +12,9 @@ from nlppets.torch import concat_linear
 
 MT = TypeVar("MT", bound=Type[PreTrainedModel])
 
+model_mlp: ContextVar[Type[nn.Module]] = ContextVar("model_mlp")
+model_config: ContextVar["Config"] = ContextVar("model_config")
+
 
 class Config(Protocol):
     hidden_size: int
@@ -19,47 +23,46 @@ class Config(Protocol):
     """domain pre-training enhancements. key for name, value for size."""
 
 
-def get_patched_module(origin_mlp: Type[nn.Module], config: Config) -> Type[nn.Module]:
-    class ChatGLMMLP(nn.Module):
-        enhancements: Dict[str, int]
-        hidden_size: int
-        inner_hidden_size: int
-        dense_h_to_4h: torch.nn.Linear
-        dense_4h_to_h: torch.nn.Linear
-        activation_func: Callable[[torch.Tensor], torch.Tensor]
+class ChatGLMMLP(nn.Module):
+    enhancements: Dict[str, int]
+    hidden_size: int
+    inner_hidden_size: int
+    dense_h_to_4h: torch.nn.Linear
+    dense_4h_to_h: torch.nn.Linear
+    activation_func: Callable[[torch.Tensor], torch.Tensor]
 
-        def __init__(self, *args, **kwargs) -> None:
-            origin_mlp.__init__(self, *args, **kwargs)
+    def __init__(self, *args, **kwargs) -> None:
+        model_mlp.get().__init__(self, *args, **kwargs)
 
-            dtype = self.dense_h_to_4h.weight.dtype
-            self.enhancements = config.domain_ffn_enhance
-            for name, size in config.domain_ffn_enhance.items():
-                setattr(
-                    self, f"{name}_up", nn.Linear(config.hidden_size, size, dtype=dtype)
-                )
-                setattr(
-                    self,
-                    f"{name}_down",
-                    nn.Linear(size, config.hidden_size, dtype=dtype),
-                )
+        dtype = self.dense_h_to_4h.weight.dtype
+        self.enhancements = model_config.get().domain_ffn_enhance
+        for name, size in model_config.get().domain_ffn_enhance.items():
+            setattr(
+                self,
+                f"{name}_up",
+                nn.Linear(model_config.get().hidden_size, size, dtype=dtype),
+            )
+            setattr(
+                self,
+                f"{name}_down",
+                nn.Linear(size, model_config.get().hidden_size, dtype=dtype),
+            )
 
-        def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-            # patched for domain enhancements
-            # [L, B, H] -> [L, B, I + E]
-            hidden_states = concat_linear(
-                self.dense_h_to_4h,
-                *(getattr(self, f"{name}_up") for name in self.enhancements.keys()),
-            )(hidden_states)
-            hidden_states = self.activation_func(hidden_states)
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # patched for domain enhancements
+        # [L, B, H] -> [L, B, I + E]
+        hidden_states = concat_linear(
+            self.dense_h_to_4h,
+            *(getattr(self, f"{name}_up") for name in self.enhancements.keys()),
+        )(hidden_states)
+        hidden_states = self.activation_func(hidden_states)
 
-            # patched for domain enhancements
-            # [L, B, I + E] -> [L, B, H]
-            return concat_linear(
-                self.dense_4h_to_h,
-                *(getattr(self, f"{name}_down") for name in self.enhancements.keys()),
-            )(hidden_states)
-
-    return ChatGLMMLP
+        # patched for domain enhancements
+        # [L, B, I + E] -> [L, B, H]
+        return concat_linear(
+            self.dense_4h_to_h,
+            *(getattr(self, f"{name}_down") for name in self.enhancements.keys()),
+        )(hidden_states)
 
 
 def domain_enhance_ffn(
@@ -91,13 +94,15 @@ def domain_enhance_ffn(
         config_with_enhance = cast(Config, config)
 
         with MonkeyPatch.context() as m:
-            m.setattr(
-                chatglm_module,
-                "GLU",
-                get_patched_module(origin_mlp, config_with_enhance),
-            )
+            m.setattr(chatglm_module, "GLU", ChatGLMMLP)
+            t1 = model_mlp.set(origin_mlp)
+            t2 = model_config.set(config_with_enhance)
 
-            origin_init(self, config, *args, **kwargs)
+            try:
+                origin_init(self, config, *args, **kwargs)
+            finally:
+                model_mlp.reset(t1)
+                model_config.reset(t2)
 
     return wraps(
         model,
