@@ -20,7 +20,7 @@ class Config(Protocol):
 
 
 def get_patched_module(origin_mlp: Type[nn.Module], config: Config) -> Type[nn.Module]:
-    class ChatGLMMLP(origin_mlp):
+    class ChatGLMMLP(nn.Module):
         enhancements: Dict[str, int]
         hidden_size: int
         inner_hidden_size: int
@@ -29,7 +29,7 @@ def get_patched_module(origin_mlp: Type[nn.Module], config: Config) -> Type[nn.M
         activation_func: Callable[[torch.Tensor], torch.Tensor]
 
         def __init__(self, *args, **kwargs) -> None:
-            super().__init__(*args, **kwargs)
+            origin_mlp.__init__(self, *args, **kwargs)
 
             dtype = self.dense_h_to_4h.weight.dtype
             self.enhancements = config.domain_ffn_enhance

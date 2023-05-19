@@ -44,7 +44,7 @@ def apply_rotary_pos_emb_index(
 def get_patched_module(
     origin_attention: Type[nn.Module], config: Config
 ) -> Type[nn.Module]:
-    class ChatGLMAttention(origin_attention):
+    class ChatGLMAttention(nn.Module):
         layer_id: int
         hidden_size: int
         hidden_size_per_partition: int
@@ -62,7 +62,7 @@ def get_patched_module(
         ]
 
         def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+            origin_attention.__init__(self, *args, **kwargs)
 
             self.enhancements = config.domain_att_enhance
             self.additional_heads = sum(self.enhancements.values())
