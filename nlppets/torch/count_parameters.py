@@ -1,15 +1,20 @@
 import torch.nn as nn
 
 
-def count_parameters(module: nn.Module):
+def get_param_numel(param: nn.Parameter, deepspeed: bool = False) -> int:
+    return param.ds_numel if deepspeed else param.numel()  # type: ignore
+
+
+def count_parameters(module: nn.Module, deepspeed: bool = False) -> int:
     return sum(
-        max(0, param.numel()) for _, param in module.named_parameters(recurse=True)
+        max(0, get_param_numel(param, deepspeed=deepspeed))
+        for _, param in module.named_parameters(recurse=True)
     )
 
 
-def count_trainable_parameters(module: nn.Module):
+def count_trainable_parameters(module: nn.Module, deepspeed: bool = False) -> int:
     return sum(
-        max(0, param.numel())
+        max(0, get_param_numel(param, deepspeed=deepspeed))
         for _, param in module.named_parameters(recurse=True)
         if param.requires_grad
     )
