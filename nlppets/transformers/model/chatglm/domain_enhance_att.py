@@ -59,7 +59,6 @@ class ChatGLMAttention(nn.Module):
     scale_mask_softmax: Any
     query_key_value: torch.nn.Linear
     dense: torch.nn.Linear
-    split_tensor_along_last_dim: Callable[[torch.Tensor, int], Tuple[torch.Tensor, ...]]
 
     def __init__(self, *args, **kwargs):
         model_attention.get().__init__(self, *args, **kwargs)
@@ -83,6 +82,23 @@ class ChatGLMAttention(nn.Module):
                     model_config.get().hidden_size,
                 ),
             )
+
+    def split_tensor_along_last_dim(
+        self,
+        tensor: torch.Tensor,
+        num_partitions: int,
+        contiguous_split_chunks: bool = False,
+    ):
+        # Get the size and dimension.
+        last_dim = tensor.dim() - 1
+        last_dim_size = tensor.size()[last_dim] // num_partitions
+        # Split.
+        tensor_list = torch.split(tensor, last_dim_size, dim=last_dim)
+        # Note: torch.split does not create contiguous tensors by default.
+        if contiguous_split_chunks:
+            return tuple(chunk.contiguous() for chunk in tensor_list)
+
+        return tensor_list
 
     def forward(
         self,
