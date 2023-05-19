@@ -1,6 +1,5 @@
 import inspect
 from functools import wraps
-from typing_extensions import ParamSpec, Concatenate
 from typing import Dict, Type, TypeVar, Callable, Optional, Protocol, cast
 
 import torch
@@ -10,8 +9,6 @@ from transformers import PreTrainedModel, PretrainedConfig
 from nlppets.general import MonkeyPatch
 from nlppets.torch import concat_linear
 
-P = ParamSpec("P")
-R = TypeVar("R")
 MT = TypeVar("MT", bound=Type[PreTrainedModel])
 
 
@@ -22,48 +19,47 @@ class Config(Protocol):
     """domain pre-training enhancements. key for name, value for size."""
 
 
-class ChatGLMMLP(nn.Module):
-    enhancements: Dict[str, int]
-    hidden_size: int
-    inner_hidden_size: int
-    dense_h_to_4h: torch.nn.Linear
-    dense_4h_to_h: torch.nn.Linear
-    activation_func: Callable[[torch.Tensor], torch.Tensor]
+def get_patched_module(origin_mlp: Type[nn.Module], config: Config) -> Type[nn.Module]:
+    class ChatGLMMLP(origin_mlp):
+        enhancements: Dict[str, int]
+        hidden_size: int
+        inner_hidden_size: int
+        dense_h_to_4h: torch.nn.Linear
+        dense_4h_to_h: torch.nn.Linear
+        activation_func: Callable[[torch.Tensor], torch.Tensor]
 
-    def __init__(
-        self,
-        config: Config,
-        origin_init: Callable[Concatenate[nn.Module, P], None],
-        *args: P.args,
-        **kwargs: P.kwargs,
-    ) -> None:
-        origin_init(self, *args, **kwargs)
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
 
-        dtype = self.dense_h_to_4h.weight.dtype
-        self.enhancements = config.domain_ffn_enhance
-        for name, size in config.domain_ffn_enhance.items():
-            setattr(
-                self, f"{name}_up", nn.Linear(config.hidden_size, size, dtype=dtype)
-            )
-            setattr(
-                self, f"{name}_down", nn.Linear(size, config.hidden_size, dtype=dtype)
-            )
+            dtype = self.dense_h_to_4h.weight.dtype
+            self.enhancements = config.domain_ffn_enhance
+            for name, size in config.domain_ffn_enhance.items():
+                setattr(
+                    self, f"{name}_up", nn.Linear(config.hidden_size, size, dtype=dtype)
+                )
+                setattr(
+                    self,
+                    f"{name}_down",
+                    nn.Linear(size, config.hidden_size, dtype=dtype),
+                )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # patched for domain enhancements
-        # [L, B, H] -> [L, B, I + E]
-        hidden_states = concat_linear(
-            self.dense_h_to_4h,
-            *(getattr(self, f"{name}_up") for name in self.enhancements.keys()),
-        )(hidden_states)
-        hidden_states = self.activation_func(hidden_states)
+        def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+            # patched for domain enhancements
+            # [L, B, H] -> [L, B, I + E]
+            hidden_states = concat_linear(
+                self.dense_h_to_4h,
+                *(getattr(self, f"{name}_up") for name in self.enhancements.keys()),
+            )(hidden_states)
+            hidden_states = self.activation_func(hidden_states)
 
-        # patched for domain enhancements
-        # [L, B, I + E] -> [L, B, H]
-        return concat_linear(
-            self.dense_4h_to_h,
-            *(getattr(self, f"{name}_down") for name in self.enhancements.keys()),
-        )(hidden_states)
+            # patched for domain enhancements
+            # [L, B, I + E] -> [L, B, H]
+            return concat_linear(
+                self.dense_4h_to_h,
+                *(getattr(self, f"{name}_down") for name in self.enhancements.keys()),
+            )(hidden_states)
+
+    return ChatGLMMLP
 
 
 def domain_enhance_ffn(
@@ -98,9 +94,7 @@ def domain_enhance_ffn(
             m.setattr(
                 chatglm_module,
                 "GLU",
-                lambda *a, **b: ChatGLMMLP(
-                    config_with_enhance, origin_mlp.__init__, *a, **b
-                ),
+                get_patched_module(origin_mlp, config_with_enhance),
             )
 
             origin_init(self, config, *args, **kwargs)
