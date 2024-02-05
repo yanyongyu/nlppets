@@ -4,7 +4,7 @@
   "name": "Python With Poetry",
 
   "build": {
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
   },
 
   // Configure tool-specific properties.
@@ -32,32 +32,32 @@
         "[python]": {
           "editor.defaultFormatter": "ms-python.black-formatter",
           "editor.codeActionsOnSave": {
-            "source.organizeImports": true
-          }
+            "source.organizeImports": true,
+          },
         },
         "[javascript]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
         },
         "[html]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
         },
         "[typescript]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
         },
         "[javascriptreact]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
         },
         "[typescriptreact]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
         },
         "lldb.executable": "/usr/bin/lldb",
         "files.exclude": {
-          "**/__pycache__": true
+          "**/__pycache__": true,
         },
         "files.watcherExclude": {
           "**/target/**": true,
-          "**/__pycache__": true
-        }
+          "**/__pycache__": true,
+        },
       },
 
       // Add the IDs of extensions you want installed when the container is created.
@@ -68,9 +68,9 @@
         "ms-python.isort",
         "ms-python.black-formatter",
         "EditorConfig.EditorConfig",
-        "esbenp.prettier-vscode"
-      ]
-    }
+        "esbenp.prettier-vscode",
+      ],
+    },
   },
 
   "remoteUser": "codespace",
@@ -78,7 +78,7 @@
   "overrideCommand": false,
 
   "mounts": [
-    "source=codespaces-linux-var-lib-docker,target=/var/lib/docker,type=volume"
+    "source=codespaces-linux-var-lib-docker,target=/var/lib/docker,type=volume",
   ],
 
   "runArgs": [
@@ -86,11 +86,11 @@
     "--security-opt",
     "seccomp=unconfined",
     "--privileged",
-    "--init"
+    "--init",
   ],
 
   // Use 'forwardPorts' to make a list of ports inside the container available locally.
   // "forwardPorts": [],
 
-  "postCreateCommand": "poetry install -E all && poetry run pre-commit install"
+  "postCreateCommand": "poetry install -E all && poetry run pre-commit install",
 }
