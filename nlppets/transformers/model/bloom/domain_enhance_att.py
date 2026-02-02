@@ -83,7 +83,7 @@ class BloomAttention(BaseAttention):
         )(hidden_states)
 
         # 3 * [B, L, (HN + EN), HS]
-        (query_layer, key_layer, value_layer) = self._split_heads(fused_qkv)
+        query_layer, key_layer, value_layer = self._split_heads(fused_qkv)
 
         batch_size, q_length, num_heads, _ = query_layer.shape
 

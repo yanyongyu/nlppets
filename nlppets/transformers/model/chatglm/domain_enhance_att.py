@@ -124,7 +124,7 @@ class ChatGLMAttention(nn.Module):
         mixed_raw_layer = mixed_raw_layer.view(*new_tensor_shape)
 
         # 3 * [L, B, (HN + EN), HS]
-        (query_layer, key_layer, value_layer) = self.split_tensor_along_last_dim(
+        query_layer, key_layer, value_layer = self.split_tensor_along_last_dim(
             mixed_raw_layer, 3
         )
 
